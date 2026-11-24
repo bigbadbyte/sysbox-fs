@@ -3,6 +3,8 @@
 package mocks
 
 import (
+	os "os"
+
 	domain "github.com/nestybox/sysbox-fs/domain"
 	mock "github.com/stretchr/testify/mock"
 
@@ -193,6 +195,34 @@ func (_m *ContainerIface) InitialMount(mp string) *domain.MountInfo {
 		r0 = rf(mp)
 	} else if ret.Get(0) != nil {
 		r0 = ret.Get(0).(*domain.MountInfo)
+	}
+
+	return r0
+}
+
+// InitialMounts provides a mock function with given fields:
+func (_m *ContainerIface) InitialMounts() []*domain.MountInfo {
+	ret := _m.Called()
+
+	var r0 []*domain.MountInfo
+	if rf, ok := ret.Get(0).(func() []*domain.MountInfo); ok {
+		r0 = rf()
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]*domain.MountInfo)
+	}
+
+	return r0
+}
+
+// MountNsFile provides a mock function with given fields:
+func (_m *ContainerIface) MountNsFile() *os.File {
+	ret := _m.Called()
+
+	var r0 *os.File
+	if rf, ok := ret.Get(0).(func() *os.File); ok {
+		r0 = rf()
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*os.File)
 	}
 
 	return r0

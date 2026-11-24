@@ -122,6 +122,11 @@ type NSenterEvent struct {
 	// Per-namespace override of Pid when joining namespaces (e.g. join the
 	// container's user + mount ns but the requester's pid ns).
 	nsPid map[domain.NStype]uint32
+
+	// Per-namespace override with a namespace file held open by sysbox-fs
+	// (for namespaces no process can be found in). Takes precedence over
+	// nsPid.
+	nsFile map[domain.NStype]*os.File
 }
 
 // SetNamespacePid makes the agent join namespace 'ns' of process 'pid'
@@ -131,6 +136,16 @@ func (e *NSenterEvent) SetNamespacePid(ns domain.NStype, pid uint32) {
 		e.nsPid = make(map[domain.NStype]uint32)
 	}
 	e.nsPid[ns] = pid
+}
+
+// SetNamespaceFile makes the agent join the namespace referred to by f (a
+// namespace fd, e.g. from NS_GET_USERNS) instead of process e.Pid's. f must
+// stay open until SendRequest() returns.
+func (e *NSenterEvent) SetNamespaceFile(ns domain.NStype, f *os.File) {
+	if e.nsFile == nil {
+		e.nsFile = make(map[domain.NStype]*os.File)
+	}
+	e.nsFile[ns] = f
 }
 
 // Env var (and fd number) through which sysbox-fs hands the seccomp
@@ -613,6 +628,11 @@ func (e *NSenterEvent) namespacePaths() []string {
 	// always first.
 
 	for _, nstype := range *(e.Namespace) {
+		if f, ok := e.nsFile[nstype]; ok {
+			// nsexec open()s the path: our fd, through procfs.
+			paths = append(paths, fmt.Sprintf("%s:/proc/%d/fd/%d", nstype, os.Getpid(), f.Fd()))
+			continue
+		}
 		pid := e.Pid
 		if p, ok := e.nsPid[nstype]; ok {
 			pid = p

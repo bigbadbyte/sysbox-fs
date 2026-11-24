@@ -17,6 +17,7 @@
 package domain
 
 import (
+	"os"
 	"time"
 
 	libpidfd "github.com/nestybox/sysbox-libs/pidfd"
@@ -52,6 +53,8 @@ type ContainerIface interface {
 	IsImmutableRoBindMount(info *MountInfo) bool
 	IsImmutableMountpoint(mp string) bool
 	InitialMount(mp string) *MountInfo
+	InitialMounts() []*MountInfo
+	MountNsFile() *os.File
 	IsImmutableRoMountpoint(mp string) bool
 	IsImmutableOverlapMountpoint(mp string) bool
 	IsRegistrationCompleted() bool

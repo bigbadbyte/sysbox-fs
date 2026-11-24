@@ -320,6 +320,9 @@ func (css *containerStateService) ContainerUnregister(c domain.ContainerIface) e
 		unix.Close(int(cntr.InitPidFd()))
 	}
 
+	// Release the container's held mount ns.
+	cntr.closeMountNs()
+
 	// Remove the net-ns tracking info for the unregistered container.
 	//
 	// Note: we don't do error checking because this can fail if the netns is not

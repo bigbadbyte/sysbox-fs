@@ -37,6 +37,15 @@ var containerProc = []*domain.MountInfo{
 	mi(14, 10, "/proc/bus", "0:60", "/bus"),
 }
 
+func TestProcOverMountsRO(t *testing.T) {
+	m := []*domain.MountInfo{mi(10, 1, "/proc", "0:60", "/"), mi(14, 10, "/proc/bus", "0:60", "/bus")}
+	m[1].Options = map[string]string{"ro": "", "nosuid": ""}
+	got := procOverMounts(m, "/proc")
+	if len(got) != 1 || !got[0].RO {
+		t.Fatalf("want /bus marked RO, got %+v", got)
+	}
+}
+
 func TestProcOverMounts(t *testing.T) {
 	got := procOverMounts(containerProc, "/proc")
 	want := []procOverMount{
@@ -62,6 +71,33 @@ func TestProcOverMountsUsesTopmostBase(t *testing.T) {
 	got := procOverMounts(m, "/proc")
 	if len(got) != 1 || got[0].Rel != "/sys" {
 		t.Fatalf("want only the over-mounts of the topmost /proc, got %+v", got)
+	}
+}
+
+// container's /sys: over-mounts can be nested (powercap sits on the
+// sysbox-fs mount at /sys/devices/virtual), and /sys/fs/cgroup is its own
+// filesystem that the sandbox gets separately.
+var containerSys = []*domain.MountInfo{
+	mi(1, 0, "/", "0:50", "/"),
+	mi(30, 1, "/sys", "0:80", "/"),
+	mi(31, 30, "/sys/fs/cgroup", "0:23", "/"),
+	mi(32, 30, "/sys/devices/virtual", "0:70", "/sys/devices/virtual"),
+	mi(33, 30, "/sys/kernel", "0:70", "/sys/kernel"),
+	mi(34, 32, "/sys/devices/virtual/powercap", "0:81", "/"),
+	mi(35, 30, "/sys/firmware", "0:82", "/"),
+}
+
+func TestOverMountsNested(t *testing.T) {
+	got := procOverMounts(containerSys, "/sys")
+	want := []procOverMount{
+		{Rel: "/fs/cgroup", Dev: "0:23", Root: "/"},
+		{Rel: "/devices/virtual", Dev: "0:70", Root: "/sys/devices/virtual"},
+		{Rel: "/kernel", Dev: "0:70", Root: "/sys/kernel"},
+		{Rel: "/devices/virtual/powercap", Dev: "0:81", Root: "/"},
+		{Rel: "/firmware", Dev: "0:82", Root: "/"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("procOverMounts(/sys) = %+v\nwant %+v", got, want)
 	}
 }
 

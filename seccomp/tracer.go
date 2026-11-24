@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -79,6 +80,24 @@ type SyscallMonitorService struct {
 	allowImmutableUnmounts bool                              // allow immutable mounts to be unmounted
 	closeSeccompOnContExit bool                              // close seccomp fds on container exit, not on process exit
 	tracer                 *syscallTracer                    // pointer to actual syscall-tracer instance
+
+	// namespace owner lookups (NS_GET_USERNS); overridable in tests
+	nsOwnerFn     nsOwnerFunc
+	openNsOwnerFn func(pid uint32, ns domain.NStype) (*os.File, error)
+}
+
+func (scs *SyscallMonitorService) nsOwner() nsOwnerFunc {
+	if scs.nsOwnerFn != nil {
+		return scs.nsOwnerFn
+	}
+	return nsOwner
+}
+
+func (scs *SyscallMonitorService) openNsOwner() func(uint32, domain.NStype) (*os.File, error) {
+	if scs.openNsOwnerFn != nil {
+		return scs.openNsOwnerFn
+	}
+	return openNsOwner
 }
 
 func NewSyscallMonitorService() *SyscallMonitorService {

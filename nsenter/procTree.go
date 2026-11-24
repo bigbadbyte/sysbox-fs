@@ -103,39 +103,60 @@ func (e *NSenterEvent) processProcTreeAttachRequest() error {
 }
 
 func buildLockedProcTree(p domain.ProcTreeBuildPayload) (int, error) {
+	fsType, base, err := treeKind(p)
+	if err != nil {
+		return -1, err
+	}
+
 	// Our mount ns is a private copy (see above); make sure no mount event
 	// propagates back to the container's.
 	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
 		return -1, fmt.Errorf("make / private: %w", err)
 	}
 
-	tmp, err := os.MkdirTemp("", "sysbox-proc-")
+	tmp, err := os.MkdirTemp("", "sysbox-"+fsType+"-")
 	if err != nil {
 		return -1, err
 	}
 	defer os.Remove(tmp)
 
-	if err := mountProcAt(tmp, p.Flags); err != nil {
+	if err := mountFsAt(fsType, tmp, p.Flags); err != nil {
 		return -1, err
 	}
 	defer unix.Unmount(tmp, unix.MNT_DETACH)
 
-	if err := applyOverMounts(tmp, p); err != nil {
+	if err := applyOverMounts(tmp, base, p); err != nil {
 		return -1, err
 	}
 
-	// The locker re-execs us; give it our /proc view of the new procfs so
-	// the Go runtime's /proc/<pid> writes (uid_map) hit our pid ns.
-	if err := overmountProc(tmp); err != nil {
-		return -1, err
+	// The locker re-execs us via /proc/self/exe, and Go writes its uid_map via
+	// /proc/<pid>, so for procfs /proc must show our pid ns: cover it with the
+	// new tree. For sysfs we stay in the container's pid ns, so its /proc is
+	// right as is.
+	if fsType == "proc" {
+		if err := overmountProc(tmp); err != nil {
+			return -1, err
+		}
 	}
 	return lockTree(tmp)
 }
 
-func mountProcAt(dir string, flags uint64) error {
-	fsfd, err := unix.Fsopen("proc", unix.FSOPEN_CLOEXEC)
+// treeKind returns the filesystem type and container base path for p;
+// only procfs and sysfs are supported (the ones with locked over-mounts).
+func treeKind(p domain.ProcTreeBuildPayload) (string, string, error) {
+	switch {
+	case p.FsType == "" || p.FsType == "proc":
+		return "proc", "/proc", nil
+	case p.FsType == "sysfs":
+		return "sysfs", "/sys", nil
+	}
+	return "", "", fmt.Errorf("unsupported filesystem %q: %w", p.FsType, syscall.EINVAL)
+}
+
+func mountFsAt(fsType, dir string, flags uint64) error {
+	fsfd, err := unix.Fsopen(fsType, unix.FSOPEN_CLOEXEC)
 	if err != nil {
-		return fmt.Errorf("fsopen proc: %w", err)
+		return fmt.Errorf("fsopen %s: %w", fsType, err)
 	}
 	defer unix.Close(fsfd)
 	if err := unix.FsconfigCreate(fsfd); err != nil {
@@ -144,14 +165,28 @@ func mountProcAt(dir string, flags uint64) error {
 
 	mfd, err := unix.Fsmount(fsfd, unix.FSMOUNT_CLOEXEC, mountAttrs(flags))
 	if err != nil {
-		return fmt.Errorf("fsmount: %w", err)
+		return fmt.Errorf("fsmount %s (%s): %w", fsType, nsDesc(), err)
 	}
 	defer unix.Close(mfd)
 
 	if err := unix.MoveMount(mfd, "", unix.AT_FDCWD, dir, unix.MOVE_MOUNT_F_EMPTY_PATH); err != nil {
-		return fmt.Errorf("attach procfs: %w", err)
+		return fmt.Errorf("attach %s: %w", fsType, err)
 	}
 	return nil
+}
+
+// nsDesc describes our namespaces, for error messages (our /proc may be
+// from another pid ns, in which case the links don't resolve).
+func nsDesc() string {
+	var out []string
+	for _, ns := range []string{"user", "mnt", "pid", "net"} {
+		l, err := os.Readlink("/proc/thread-self/ns/" + ns)
+		if err != nil {
+			l = "?"
+		}
+		out = append(out, ns+"="+l)
+	}
+	return strings.Join(out, " ")
 }
 
 // mountAttrs maps mount(2) flags to MOUNT_ATTR_* values.
@@ -170,11 +205,15 @@ func mountAttrs(flags uint64) int {
 	return attrs
 }
 
-func applyOverMounts(dir string, p domain.ProcTreeBuildPayload) error {
+// applyOverMounts binds each over-mount from the container's base (e.g.
+// /sys/kernel) onto the same path in the new tree at dir. Binds are not
+// recursive: nested over-mounts are listed (parents first) and bound
+// separately, exactly as the container has them.
+func applyOverMounts(dir, base string, p domain.ProcTreeBuildPayload) error {
 	for _, rel := range p.OverMounts {
 		dst := filepath.Join(dir, rel)
-		if err := unix.Mount(filepath.Join("/proc", rel), dst, "", unix.MS_BIND, ""); err != nil {
-			return fmt.Errorf("bind /proc%s: %w", rel, err)
+		if err := unix.Mount(filepath.Join(base, rel), dst, "", unix.MS_BIND, ""); err != nil {
+			return fmt.Errorf("bind %s%s: %w", base, rel, err)
 		}
 	}
 	for _, rel := range p.RoMounts {

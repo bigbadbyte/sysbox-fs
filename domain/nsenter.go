@@ -16,6 +16,8 @@
 
 package domain
 
+import "os"
+
 // Aliases to leverage strong-typing.
 type NStype = string
 type NSenterMsgType = string
@@ -152,6 +154,7 @@ type NSenterEventIface interface {
 // for procfs mounts from nested user namespaces).
 type NSenterTreeEventIface interface {
 	SetNamespacePid(ns NStype, pid uint32)
+	SetNamespaceFile(ns NStype, f *os.File)
 	TreeFd() int
 	SetTreeFd(fd int)
 }
@@ -320,10 +323,14 @@ type Openat2SyscallPayload struct {
 }
 
 // ProcTreeBuildPayload asks an nsenter agent (in the container's mount and
-// user namespaces, and the requester's pid namespace) to build a detached,
-// locked procfs tree carrying the given over-mounts (paths relative to the
-// procfs root, bound from the same paths under the container's /proc).
+// user namespaces, and the requester's pid namespace for procfs or network
+// namespace for sysfs) to build a detached, locked tree of a new FsType
+// ("proc" or "sysfs") filesystem carrying the given over-mounts (paths
+// relative to its root, bound from the same paths under the container's
+// Base, "/proc" or "/sys"; listed parents first).
 type ProcTreeBuildPayload struct {
+	FsType     string   `json:"fstype"`
+	Base       string   `json:"base"`
 	Flags      uint64   `json:"flags"`
 	OverMounts []string `json:"overmounts"`
 	RoMounts   []string `json:"romounts"`
