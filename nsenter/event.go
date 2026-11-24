@@ -127,6 +127,16 @@ type NSenterEvent struct {
 	// (for namespaces no process can be found in). Takes precedence over
 	// nsPid.
 	nsFile map[domain.NStype]*os.File
+
+	// /proc/sys dir fd: sysbox-fs side, the one to hand to the agent; agent
+	// side, the one inherited (-1 if none). See procSysRequest.go.
+	procSysFd int
+}
+
+// SetProcSysFd makes the agent serve /proc/sys file requests relative to fd
+// (a /proc/sys dir fd; it must stay open until SendRequest() returns).
+func (e *NSenterEvent) SetProcSysFd(fd int) {
+	e.procSysFd = fd
 }
 
 // SetNamespacePid makes the agent join namespace 'ns' of process 'pid'
@@ -717,6 +727,25 @@ func (e *NSenterEvent) SendRequest() error {
 		defer notifyFile.Close()
 		extraFiles = append(extraFiles, notifyFile)
 		env = append(env, fmt.Sprintf("%s=%d", notifyFdEnv, agentNotifyFd))
+	}
+
+	// /proc/sys passthrough from a nested user ns: hand the dir fd to the
+	// agent (SBX-006). It's the agent's fd 4 like the extra fds above and
+	// below, which never come with it.
+	if e.procSysFd >= 0 {
+		if len(extraFiles) != 1 || e.ReqMsg.Type == domain.ProcTreeAttachRequest {
+			childPipe.Close()
+			return errors.New("/proc/sys fd can't be combined with other agent fds")
+		}
+		dupFd, err := unix.FcntlInt(uintptr(e.procSysFd), unix.F_DUPFD_CLOEXEC, 0)
+		if err != nil {
+			childPipe.Close()
+			return fmt.Errorf("Error duplicating /proc/sys fd: %v", err)
+		}
+		procSysFile := os.NewFile(uintptr(dupFd), "procSys")
+		defer procSysFile.Close()
+		extraFiles = append(extraFiles, procSysFile)
+		env = append(env, fmt.Sprintf("%s=%d", procSysFdEnv, agentProcSysFd))
 	}
 
 	// procfs tree attach: hand the detached tree to the agent.
@@ -1858,7 +1887,7 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 			Type:    nsenterMsg.Type,
 			Payload: p,
 		}
-		return e.processLookupRequest()
+		return e.viaProcSys(e.processLookupRequest)
 
 	case domain.OpenFileRequest:
 		var p domain.OpenFilePayload
@@ -1874,7 +1903,7 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 			Type:    nsenterMsg.Type,
 			Payload: p,
 		}
-		return e.processOpenFileRequest()
+		return e.viaProcSys(e.processOpenFileRequest)
 
 	case domain.ReadFileRequest:
 		var p domain.ReadFilePayload
@@ -1890,7 +1919,7 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 			Type:    nsenterMsg.Type,
 			Payload: p,
 		}
-		return e.processFileReadRequest()
+		return e.viaProcSys(e.processFileReadRequest)
 
 	case domain.WriteFileRequest:
 		var p domain.WriteFilePayload
@@ -1906,7 +1935,7 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 			Type:    nsenterMsg.Type,
 			Payload: p,
 		}
-		return e.processFileWriteRequest()
+		return e.viaProcSys(e.processFileWriteRequest)
 
 	case domain.ReadDirRequest:
 		var p domain.ReadDirPayload
@@ -1922,7 +1951,7 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 			Type:    nsenterMsg.Type,
 			Payload: p,
 		}
-		return e.processDirReadRequest()
+		return e.viaProcSys(e.processDirReadRequest)
 
 	case domain.ReadLinkRequest:
 		var p domain.ReadLinkPayload
@@ -1938,7 +1967,7 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 			Type:    nsenterMsg.Type,
 			Payload: p,
 		}
-		return e.processReadLinkRequest()
+		return e.viaProcSys(e.processReadLinkRequest)
 
 	case domain.SetxattrSyscallRequest:
 		var p domain.SetxattrSyscallPayload
@@ -2212,6 +2241,12 @@ func Init() (err error) {
 		}
 	}
 
+	// /proc/sys dir fd (nested user ns /proc/sys requests only, SBX-006).
+	procSysFd, err := procSysFdFromEnv()
+	if err != nil {
+		return err
+	}
+
 	// Clear the current process's environment to clean any libcontainer
 	// specific env vars.
 	os.Clearenv()
@@ -2223,7 +2258,8 @@ func Init() (err error) {
 	nsenterSvc.Setup(processSvc, mountSvc)
 	mountSvc.Setup(nil, nil, processSvc, nsenterSvc)
 
-	var event = NSenterEvent{service: nsenterSvc.(*nsenterService), notifyFd: notifyFd, treeFd: treeFd}
+	var event = NSenterEvent{service: nsenterSvc.(*nsenterService), notifyFd: notifyFd,
+		treeFd: treeFd, procSysFd: procSysFd}
 
 	// Process incoming request; response will be populated in event.ResMsg.
 	err = event.processRequest(pipe)

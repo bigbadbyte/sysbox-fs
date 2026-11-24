@@ -159,6 +159,13 @@ type NSenterTreeEventIface interface {
 	SetTreeFd(fd int)
 }
 
+// NSenterProcSysEventIface is implemented by nsenter events whose agent can
+// serve /proc/sys file requests relative to a /proc/sys dir fd (used for
+// requesters in nested user namespaces).
+type NSenterProcSysEventIface interface {
+	SetProcSysFd(fd int)
+}
+
 // NSenterMessage struct defines the layout of the messages being exchanged
 // between sysbox-fs 'main' and 'forked' ones.
 type NSenterMessage struct {

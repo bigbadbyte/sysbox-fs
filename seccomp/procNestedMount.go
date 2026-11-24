@@ -23,6 +23,7 @@ import (
 
 	"github.com/nestybox/sysbox-fs/domain"
 	"github.com/nestybox/sysbox-fs/fuse"
+	"github.com/nestybox/sysbox-fs/nsutil"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
@@ -47,30 +48,12 @@ type nsOwnerFunc func(pid uint32, ns domain.NStype) (domain.Inode, error)
 // openNsOwner returns an fd for the user ns owning namespace ns of pid
 // (NS_GET_USERNS).
 func openNsOwner(pid uint32, ns domain.NStype) (*os.File, error) {
-	f, err := os.Open(fmt.Sprintf("/proc/%d/ns/%s", pid, ns))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	fd, err := unix.IoctlRetInt(int(f.Fd()), unix.NS_GET_USERNS)
-	if err != nil {
-		return nil, fmt.Errorf("NS_GET_USERNS on %s ns of pid %d: %w", ns, pid, err)
-	}
-	return os.NewFile(uintptr(fd), "userns"), nil
+	return nsutil.OpenOwner(pid, ns)
 }
 
 // nsOwner implements nsOwnerFunc.
 func nsOwner(pid uint32, ns domain.NStype) (domain.Inode, error) {
-	f, err := openNsOwner(pid, ns)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	var st unix.Stat_t
-	if err := unix.Fstat(int(f.Fd()), &st); err != nil {
-		return 0, err
-	}
-	return st.Ino, nil
+	return nsutil.OwnerInode(pid, ns)
 }
 
 // containerUserns returns the inode of the container's user ns: the owner of

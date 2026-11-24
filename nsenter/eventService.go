@@ -61,6 +61,7 @@ func (s *nsenterService) NewEvent(
 		Async:      async,
 		reaper:     s.reaper,
 		treeFd:     -1,
+		procSysFd:  -1,
 	}
 
 	return event
