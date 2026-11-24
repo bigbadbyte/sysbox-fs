@@ -358,11 +358,9 @@ func (h *ProcSysKernel) Open(
 		}
 		return false, nil
 
-	case "domainname":
-		return false, nil
-
-	case "hostname":
-		return false, nil
+	case "domainname", "hostname":
+		// UTS-namespaced: opened in the requester's namespaces (SBX-005).
+		return h.Service.GetPassThroughHandler().Open(n, req)
 
 	case "kptr_restrict":
 		return false, nil
@@ -416,11 +414,12 @@ func (h *ProcSysKernel) Read(
 	case "ngroups_max":
 		return readCntrData(h, n, req)
 
-	case "domainname":
-		return readCntrData(h, n, req)
-
-	case "hostname":
-		return readCntrData(h, n, req)
+	case "domainname", "hostname":
+		// UTS-namespaced in the kernel: read it in the requester's own
+		// namespaces. (These used to be served from a per-container cache
+		// filled from sysbox-fs' own view, i.e. the host's names; SBX-005.)
+		req.NoCache = true
+		return h.Service.GetPassThroughHandler().Read(n, req)
 
 	case "kptr_restrict":
 		return readCntrData(h, n, req)
@@ -507,11 +506,11 @@ func (h *ProcSysKernel) Write(
 		}
 		return writeCntrData(h, n, req, nil)
 
-	case "domainname":
-		return writeCntrData(h, n, req, nil)
-
-	case "hostname":
-		return writeCntrData(h, n, req, nil)
+	case "domainname", "hostname":
+		// UTS-namespaced: write it in the requester's own namespaces, like
+		// sethostname(2) / setdomainname(2) would (SBX-005).
+		req.NoCache = true
+		return h.Service.GetPassThroughHandler().Write(n, req)
 	}
 
 	if !h.Service.ShmSysctlUserNamespaced() {
