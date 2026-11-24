@@ -184,6 +184,20 @@ func (_m *ContainerIface) IsImmutableMountpoint(mp string) bool {
 	return r0
 }
 
+// InitialMount provides a mock function with given fields: mp
+func (_m *ContainerIface) InitialMount(mp string) *domain.MountInfo {
+	ret := _m.Called(mp)
+
+	var r0 *domain.MountInfo
+	if rf, ok := ret.Get(0).(func(string) *domain.MountInfo); ok {
+		r0 = rf(mp)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*domain.MountInfo)
+	}
+
+	return r0
+}
+
 // IsImmutableOverlapMountpoint provides a mock function with given fields: mp
 func (_m *ContainerIface) IsImmutableOverlapMountpoint(mp string) bool {
 	ret := _m.Called(mp)

@@ -221,6 +221,18 @@ func (c *container) IsImmutableMountpoint(mp string) bool {
 	return false
 }
 
+// InitialMount returns the container's initial (immutable) mount at mp, or
+// nil if there is none or the container's mount info isn't initialized yet.
+func (c *container) InitialMount(mp string) *domain.MountInfo {
+	c.intLock.RLock()
+	defer c.intLock.RUnlock()
+
+	if c.mountInfoParser == nil {
+		return nil
+	}
+	return c.mountInfoParser.LookupByMountpoint(mp)
+}
+
 func (c *container) IsImmutableRoMountpoint(mp string) bool {
 	c.intLock.RLock()
 	defer c.intLock.RUnlock()

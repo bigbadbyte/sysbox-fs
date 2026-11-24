@@ -51,6 +51,7 @@ type ContainerIface interface {
 	IsImmutableBindMount(info *MountInfo) bool
 	IsImmutableRoBindMount(info *MountInfo) bool
 	IsImmutableMountpoint(mp string) bool
+	InitialMount(mp string) *MountInfo
 	IsImmutableRoMountpoint(mp string) bool
 	IsImmutableOverlapMountpoint(mp string) bool
 	IsRegistrationCompleted() bool

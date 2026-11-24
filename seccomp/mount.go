@@ -233,10 +233,15 @@ func (m *mountSyscallInfo) createProcPayload(
 	// Payload instruction for original "/proc" mount request.
 	payload = append(payload, m.MountSyscallPayload)
 
+	// Bind-mount sources are container paths (e.g. /proc/sys); the requester
+	// may have pivot_root'ed so that they live elsewhere in its mount ns (e.g.
+	// /oldroot/proc/sys under bubblewrap). See nestybox/sysbox#1058.
+	src := newSourceResolver(m.cntr, mip)
+
 	// If procfs has a read-only attribute at super-block level, we must also
 	// apply this to the new mountpoint (otherwise we will get a permission
 	// denied from the kernel when doing the mount).
-	procInfo := mip.GetInfo("/proc")
+	procInfo := mip.GetInfo(src.Resolve("/proc", m.Target))
 	if procInfo != nil {
 		if _, ok := procInfo.VfsOptions["ro"]; ok {
 			payload[0].Flags |= unix.MS_RDONLY
@@ -253,7 +258,7 @@ func (m *mountSyscallInfo) createProcPayload(
 		newelem := &domain.MountSyscallPayload{
 			domain.NSenterMsgHeader{},
 			domain.Mount{
-				Source: v,
+				Source: src.Resolve(v, m.Target),
 				Target: filepath.Join(m.Target, relPath),
 				FsType: "",
 				Flags:  unix.MS_BIND,
@@ -274,7 +279,7 @@ func (m *mountSyscallInfo) createProcPayload(
 		newelem := &domain.MountSyscallPayload{
 			domain.NSenterMsgHeader{},
 			domain.Mount{
-				Source: v,
+				Source: src.Resolve(v, m.Target),
 				Target: filepath.Join(m.Target, relPath),
 				FsType: "",
 				Flags:  unix.MS_BIND,
@@ -295,7 +300,7 @@ func (m *mountSyscallInfo) createProcPayload(
 		newelem := &domain.MountSyscallPayload{
 			domain.NSenterMsgHeader{},
 			domain.Mount{
-				Source: v,
+				Source: src.Resolve(v, m.Target),
 				Target: filepath.Join(m.Target, relPath),
 				FsType: "",
 				Flags:  unix.MS_BIND,
@@ -386,10 +391,13 @@ func (m *mountSyscallInfo) createSysPayload(
 	// Payload instruction for original "/sys" mount request.
 	payload = append(payload, m.MountSyscallPayload)
 
+	// See createProcPayload() for why bind sources are resolved.
+	src := newSourceResolver(m.cntr, mip)
+
 	// If sysfs has a read-only attribute at super-block level, we must also
 	// apply this to the new mountpoint (otherwise we will get a permission
 	// denied from the kernel when doing the mount).
-	sysInfo := mip.GetInfo("/sys")
+	sysInfo := mip.GetInfo(src.Resolve("/sys", m.Target))
 	if sysInfo != nil {
 		if _, ok := sysInfo.VfsOptions["ro"]; ok {
 			payload[0].Flags |= unix.MS_RDONLY
@@ -406,7 +414,7 @@ func (m *mountSyscallInfo) createSysPayload(
 		newelem := &domain.MountSyscallPayload{
 			domain.NSenterMsgHeader{},
 			domain.Mount{
-				Source: v,
+				Source: src.Resolve(v, m.Target),
 				Target: filepath.Join(m.Target, relPath),
 				FsType: "",
 				Flags:  unix.MS_BIND,

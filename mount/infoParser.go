@@ -1059,6 +1059,12 @@ func (mi *mountInfoParser) LookupByMountpoint(mp string) *domain.MountInfo {
 	return nil
 }
 
+// LookupByFsID returns all the mounts of the filesystem with the given id
+// (the mountinfo "major:minor" field), in mountinfo order.
+func (mi *mountInfoParser) LookupByFsID(fsID string) []*domain.MountInfo {
+	return mi.fsIdInfo[fsID]
+}
+
 func (mi *mountInfoParser) MountInode(mp string) uint64 {
 
 	if info, ok := mi.mpInfo[mp]; ok {
