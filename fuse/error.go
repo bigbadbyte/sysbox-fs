@@ -82,10 +82,13 @@ func (e *IOerror) MarshalJSON() ([]byte, error) {
 		errcode = syscall.EIO
 	}
 
-	// Finally, let's populate the fields of NSenterError struct.
+	// Finally, let's populate the fields of NSenterError struct (keeping a
+	// more descriptive message if the sender provided one).
 	e.Type = reflect.TypeOf(err).String()
 	e.Code = errcode
-	e.Message = err.Error()
+	if e.Message == "" {
+		e.Message = err.Error()
+	}
 
 	return json.Marshal(*e)
 }

@@ -70,6 +70,13 @@ func (m *mountSyscallInfo) process() (*sysResponse, error) {
 
 		switch m.FsType {
 		case "proc":
+			nested, err := inNestedUserns(m.processInfo, m.cntr.InitProc())
+			if err != nil {
+				return nil, err
+			}
+			if nested {
+				return m.processNestedProcMount(mip)
+			}
 			return m.processProcMount(mip)
 		case "sysfs":
 			return m.processSysMount(mip)

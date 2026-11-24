@@ -113,6 +113,24 @@ type NSenterEvent struct {
 	// Seccomp notification fd inherited by the nsenter agent (openat2
 	// requests only; -1 otherwise).
 	notifyFd int
+
+	// Detached procfs tree: sysbox-fs side, the fd received from a
+	// ProcTreeBuild agent or handed to a ProcTreeAttach agent; agent side,
+	// the fd inherited for attaching (-1 if none). See procTree.go.
+	treeFd int
+
+	// Per-namespace override of Pid when joining namespaces (e.g. join the
+	// container's user + mount ns but the requester's pid ns).
+	nsPid map[domain.NStype]uint32
+}
+
+// SetNamespacePid makes the agent join namespace 'ns' of process 'pid'
+// instead of process e.Pid's.
+func (e *NSenterEvent) SetNamespacePid(ns domain.NStype, pid uint32) {
+	if e.nsPid == nil {
+		e.nsPid = make(map[domain.NStype]uint32)
+	}
+	e.nsPid[ns] = pid
 }
 
 // Env var (and fd number) through which sysbox-fs hands the seccomp
@@ -121,6 +139,23 @@ const (
 	notifyFdEnv   = "_SYSBOXFS_NOTIFYFD"
 	agentNotifyFd = 4
 )
+
+// Same for the detached procfs tree handed to a ProcTreeAttach agent.
+const (
+	treeFdEnv   = "_SYSBOXFS_TREEFD"
+	agentTreeFd = 4
+)
+
+// TreeFd returns the procfs tree fd received from a ProcTreeBuild agent (-1
+// if none); the caller owns it.
+func (e *NSenterEvent) TreeFd() int {
+	return e.treeFd
+}
+
+// SetTreeFd sets the procfs tree fd to hand to a ProcTreeAttach agent.
+func (e *NSenterEvent) SetTreeFd(fd int) {
+	e.treeFd = fd
+}
 
 //
 // Generic getter / setter methods.
@@ -496,6 +531,24 @@ func (e *NSenterEvent) processResponse(pipe *os.File) error {
 		}
 		break
 
+	case domain.ProcTreeBuildResponse:
+		logrus.Debug("Received nsenterEvent procTreeBuildResponse message.")
+
+		if len(fds) != 1 {
+			for _, fd := range fds {
+				unix.Close(fd)
+			}
+			return fmt.Errorf("procTreeBuildResponse: expected 1 fd, got %d", len(fds))
+		}
+		e.treeFd = fds[0]
+		e.ResMsg = &domain.NSenterMessage{Type: nsenterMsg.Type, Payload: ""}
+		break
+
+	case domain.ProcTreeAttachResponse:
+		logrus.Debug("Received nsenterEvent procTreeAttachResponse message.")
+		e.ResMsg = &domain.NSenterMessage{Type: nsenterMsg.Type, Payload: ""}
+		break
+
 	case domain.Openat2SyscallResponse:
 		logrus.Debug("Received nsenterEvent openat2SyscallResponse message.")
 
@@ -560,7 +613,11 @@ func (e *NSenterEvent) namespacePaths() []string {
 	// always first.
 
 	for _, nstype := range *(e.Namespace) {
-		path := nstype + ":" + filepath.Join("/proc", strconv.Itoa(int(e.Pid)), "/ns", nstype)
+		pid := e.Pid
+		if p, ok := e.nsPid[nstype]; ok {
+			pid = p
+		}
+		path := nstype + ":" + filepath.Join("/proc", strconv.Itoa(int(pid)), "/ns", nstype)
 		paths = append(paths, path)
 	}
 
@@ -623,6 +680,10 @@ func (e *NSenterEvent) SendRequest() error {
 
 	extraFiles := []*os.File{childPipe}
 	env := []string{"_LIBCONTAINER_INITPIPE=3", fmt.Sprintf("GOMAXPROCS=%s", os.Getenv("GOMAXPROCS"))}
+	if !e.Async {
+		// nsexec's bail() messages go to its log pipe: the agent's stderr.
+		env = append(env, "_LIBCONTAINER_LOGPIPE=2")
+	}
 
 	// openat2: hand a copy of the seccomp notification fd to the agent so it
 	// can inject the opened file into the trapped process itself.
@@ -638,7 +699,23 @@ func (e *NSenterEvent) SendRequest() error {
 		env = append(env, fmt.Sprintf("%s=%d", notifyFdEnv, agentNotifyFd))
 	}
 
-	// Prepare exec.cmd in charge of running: "sysbox-fs nsenter".
+	// procfs tree attach: hand the detached tree to the agent.
+	if e.ReqMsg.Type == domain.ProcTreeAttachRequest {
+		dupFd, err := unix.FcntlInt(uintptr(e.treeFd), unix.F_DUPFD_CLOEXEC, 0)
+		if err != nil {
+			childPipe.Close()
+			return fmt.Errorf("Error duplicating procfs tree fd: %v", err)
+		}
+		treeFile := os.NewFile(uintptr(dupFd), "procTree")
+		defer treeFile.Close()
+		extraFiles = append(extraFiles, treeFile)
+		env = append(env, fmt.Sprintf("%s=%d", treeFdEnv, agentTreeFd))
+	}
+
+	// Prepare exec.cmd in charge of running: "sysbox-fs nsenter". Its stderr
+	// carries nsexec's bail() messages (e.g. a failed setns), which are the
+	// only explanation for an "Error receiving first-child pid: EOF".
+	agentStderr := &boundedBuffer{max: 4096}
 	cmd := &exec.Cmd{
 		Path:        "/proc/self/exe",
 		Args:        []string{os.Args[0], "nsenter"},
@@ -647,7 +724,7 @@ func (e *NSenterEvent) SendRequest() error {
 		SysProcAttr: &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM},
 		Stdin:       nil,
 		Stdout:      nil,
-		Stderr:      nil,
+		Stderr:      agentStderr,
 	}
 
 	// Launch sysbox-fs' first child process.
@@ -674,7 +751,12 @@ func (e *NSenterEvent) SendRequest() error {
 	var pid pid
 	decoder := json.NewDecoder(e.parentPipe)
 	if err := decoder.Decode(&pid); err != nil {
-		logrus.Warnf("Error receiving first-child pid: %s", err)
+		if e.Async {
+			logrus.Warnf("Error receiving first-child pid: %s", err)
+		} else {
+			_ = cmd.Wait() // collect the agent's stderr
+			logrus.Warnf("Error receiving first-child pid: %s (nsenter: %s)", err, agentStderr.String())
+		}
 		if !e.Async {
 			e.reaper.nsenterReapReq()
 		}
@@ -2043,6 +2125,28 @@ func (e *NSenterEvent) processRequest(pipe *os.File) error {
 
 		return e.processOpenat2SyscallRequest()
 
+	case domain.ProcTreeBuildRequest:
+		var p domain.ProcTreeBuildPayload
+		if payload != nil {
+			if err := json.Unmarshal(payload, &p); err != nil {
+				logrus.Error(err)
+				return err
+			}
+		}
+		e.ReqMsg = &domain.NSenterMessage{Type: nsenterMsg.Type, Payload: p}
+		return e.processProcTreeBuildRequest()
+
+	case domain.ProcTreeAttachRequest:
+		var p domain.ProcTreeAttachPayload
+		if payload != nil {
+			if err := json.Unmarshal(payload, &p); err != nil {
+				logrus.Error(err)
+				return err
+			}
+		}
+		e.ReqMsg = &domain.NSenterMessage{Type: nsenterMsg.Type, Payload: p}
+		return e.processProcTreeAttachRequest()
+
 	default:
 		e.ResMsg = &domain.NSenterMessage{
 			Type:    domain.ErrorResponse,
@@ -2080,6 +2184,14 @@ func Init() (err error) {
 		}
 	}
 
+	// Detached procfs tree (procfs tree attach requests only).
+	treeFd := -1
+	if v := os.Getenv(treeFdEnv); v != "" {
+		if treeFd, err = strconv.Atoi(v); err != nil {
+			return fmt.Errorf("Unable to convert %s=%s to int: %s", treeFdEnv, v, err)
+		}
+	}
+
 	// Clear the current process's environment to clean any libcontainer
 	// specific env vars.
 	os.Clearenv()
@@ -2091,7 +2203,7 @@ func Init() (err error) {
 	nsenterSvc.Setup(processSvc, mountSvc)
 	mountSvc.Setup(nil, nil, processSvc, nsenterSvc)
 
-	var event = NSenterEvent{service: nsenterSvc.(*nsenterService), notifyFd: notifyFd}
+	var event = NSenterEvent{service: nsenterSvc.(*nsenterService), notifyFd: notifyFd, treeFd: treeFd}
 
 	// Process incoming request; response will be populated in event.ResMsg.
 	err = event.processRequest(pipe)

@@ -70,6 +70,7 @@ type mountInfoParser struct {
 	idInfo       map[int]*domain.MountInfo            // mountinfo, indexed by mount ID
 	inInfo       map[domain.Inode][]*domain.MountInfo // mountinfo, indexed by mountpoint inode
 	fsIdInfo     map[string][]*domain.MountInfo       // mountinfo, indexed by file-sys id (major/minor ver)
+	ordered      []*domain.MountInfo                  // mountinfo, in file order
 	service      *MountService                        // backpointer to mount service
 }
 
@@ -144,6 +145,7 @@ func (mi *mountInfoParser) parseData(data []byte) error {
 
 		mi.mpInfo[parsedMounts.MountPoint] = parsedMounts
 		mi.idInfo[parsedMounts.MountID] = parsedMounts
+		mi.ordered = append(mi.ordered, parsedMounts)
 
 		// File-system-id map utilized for remount / unmount processing.
 		fsIdSlice, ok := mi.fsIdInfo[parsedMounts.MajorMinorVer]
@@ -1057,6 +1059,12 @@ func (mi *mountInfoParser) LookupByMountpoint(mp string) *domain.MountInfo {
 	}
 
 	return nil
+}
+
+// AllMounts returns all the mounts, in mountinfo order (a mount always comes
+// after its parent; mounts stacked on the same path come bottom-up).
+func (mi *mountInfoParser) AllMounts() []*domain.MountInfo {
+	return mi.ordered
 }
 
 // LookupByFsID returns all the mounts of the filesystem with the given id

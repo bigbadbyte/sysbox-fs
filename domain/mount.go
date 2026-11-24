@@ -43,6 +43,7 @@ type MountInfoParserIface interface {
 	LookupByMountID(id int) *MountInfo
 	LookupByMountpoint(mp string) *MountInfo
 	LookupByFsID(fsID string) []*MountInfo
+	AllMounts() []*MountInfo
 	IsSysboxfsBaseMount(mountpoint string) bool
 	IsSysboxfsBaseRoMount(mountpoint string) bool
 	IsSysboxfsSubmount(mountpoint string) bool

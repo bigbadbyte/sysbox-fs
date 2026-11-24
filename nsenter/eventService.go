@@ -60,6 +60,7 @@ func (s *nsenterService) NewEvent(
 		ResMsg:     res,
 		Async:      async,
 		reaper:     s.reaper,
+		treeFd:     -1,
 	}
 
 	return event

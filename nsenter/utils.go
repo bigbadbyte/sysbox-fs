@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -143,6 +144,32 @@ func processPayloadMounts(mountSysfs, mountProcfs bool) (*payloadMountsInfo, err
 	}
 
 	return pmi, nil
+}
+
+// boundedBuffer is an io.Writer keeping at most max bytes (the first ones),
+// for capturing a child's diagnostics without unbounded memory use.
+type boundedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.max - len(b.buf); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		b.buf = append(b.buf, p[:room]...)
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return strings.TrimSpace(string(b.buf))
 }
 
 func replaceProcfsAndSysfsPaths(path string, pmi *payloadMountsInfo) string {

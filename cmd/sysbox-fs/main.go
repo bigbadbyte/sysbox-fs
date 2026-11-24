@@ -249,6 +249,14 @@ func main() {
 			Name:  "nsenter",
 			Usage: "Execute action within container namespaces",
 			Action: func(c *cli.Context) error {
+				// procfs tree locker (re-exec by a procfs tree build agent)
+				if nsenter.IsProcTreeLocker() {
+					if err := nsenter.RunProcTreeLocker(); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						os.Exit(1)
+					}
+					return nil
+				}
 				// nsenter errors are passed back to sysbox-fs via a pipe
 				nsenter.Init()
 				return nil

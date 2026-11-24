@@ -98,6 +98,10 @@ const (
 	GidInfoResponse            NSenterMsgType = "gidInfoResponse"
 	Openat2SyscallRequest      NSenterMsgType = "openat2SyscallRequest"
 	Openat2SyscallResponse     NSenterMsgType = "openat2SyscallResponse"
+	ProcTreeBuildRequest       NSenterMsgType = "procTreeBuildRequest"
+	ProcTreeBuildResponse      NSenterMsgType = "procTreeBuildResponse"
+	ProcTreeAttachRequest      NSenterMsgType = "procTreeAttachRequest"
+	ProcTreeAttachResponse     NSenterMsgType = "procTreeAttachResponse"
 	ErrorResponse              NSenterMsgType = "errorResponse"
 )
 
@@ -141,6 +145,15 @@ type NSenterEventIface interface {
 	SetResponseMsg(m *NSenterMessage)
 	GetResponseMsg() *NSenterMessage
 	GetProcessID() uint32
+}
+
+// NSenterTreeEventIface is implemented by nsenter events that can carry a
+// detached procfs tree fd and join namespaces of different processes (used
+// for procfs mounts from nested user namespaces).
+type NSenterTreeEventIface interface {
+	SetNamespacePid(ns NStype, pid uint32)
+	TreeFd() int
+	SetTreeFd(fd int)
 }
 
 // NSenterMessage struct defines the layout of the messages being exchanged
@@ -304,6 +317,22 @@ type Openat2SyscallPayload struct {
 	// to the nsenter agent as an inherited fd, so that sysbox-fs itself never
 	// holds an fd pointing into its own FUSE mounts.
 	NotifyFd int32 `json:"-"`
+}
+
+// ProcTreeBuildPayload asks an nsenter agent (in the container's mount and
+// user namespaces, and the requester's pid namespace) to build a detached,
+// locked procfs tree carrying the given over-mounts (paths relative to the
+// procfs root, bound from the same paths under the container's /proc).
+type ProcTreeBuildPayload struct {
+	Flags      uint64   `json:"flags"`
+	OverMounts []string `json:"overmounts"`
+	RoMounts   []string `json:"romounts"`
+}
+
+// ProcTreeAttachPayload asks an nsenter agent (in the requester's namespaces)
+// to attach the tree fd it receives at Target (mount_setattr-free move_mount).
+type ProcTreeAttachPayload struct {
+	Target string `json:"target"`
 }
 
 type Openat2RespPayload struct {
